@@ -1,0 +1,88 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>ProxHTTPSProxyMII</title><style></style></head><body>
+<h1 id="proxhttpsproxymii">ProxHTTPSProxyMII</h1>
+<p>Created to provide modern nag-free HTTPS connections for an HTTP proxy.</p>
+<h2 id="how-it-works">How it works</h2>
+<p><img src="http://www.proxfilter.net/proxhttpsproxy/HowItWorks.gif" alt="how it works"></p>
+<h2 id="eligible-http-proxies">Eligible HTTP Proxies</h2>
+<ul>
+<li>The <a href="http://www.proxomitron.info">Proxomitron</a>, for which ProxHTTPSProxy was created :)</li>
+<li>Any that have the ability to forward all requests with a &quot;Tagged:ProxHTTPSProxyMII FrontProxy/*&quot; header to the ProxHTTPSProxyMII rear server.</li>
+<li>Any that can be ran as two instances, one for true http and another for &quot;tagged&quot; http</li>
+<li>Any that will only be used to monitor https traffic  </li>
+</ul>
+<h2 id="install">Install</h2>
+<ul>
+<li>ProxHTTPSProxy&#39;s &quot;CA.crt&quot; to the Client&#39;s store of trusted certificate authorities.</li>
+</ul>
+<h2 id="configure">Configure</h2>
+<ul>
+<li>The Client to use the ProxHTTPSProxy front server at 127.0.0.1 on port 8079 for secure connections.</li>
+<li>The HTTP proxy to receive requests at 127.0.0.1 on port 8080.</li>
+<li>The HTTP proxy to forward requests to the ProxHTTPSProxy rear server at 127.0.0.1 on port 8081.</li>
+<li>Edit &quot;Config.ini&quot; to change these requirements.</li>
+</ul>
+<h2 id="execute">Execute</h2>
+<p>ProxHTTPSProxy.exe to start.</p>
+<h2 id="remember">Remember</h2>
+<p>Be aware and careful! Use a direct connection when you don&#39;t want any mistakes made.</p>
+<p>Use at your own risk!</p>
+<p>Have fun!</p>
+<h2 id="discuss">Discuss</h2>
+<p><a href="http://prxbx.com/forums/showthread.php?tid=2172">http://prxbx.com/forums/showthread.php?tid=2172</a></p>
+<h2 id="author">Author</h2>
+<ul>
+<li>phoenix (aka whenever)</li>
+<li>JJoe (test and doc)</li>
+</ul>
+<h1 id="proxomitron-tips">Proxomitron Tips</h1>
+<h2 id="to-use">To use</h2>
+<ul>
+<li><p>Add the ProxHTTPSProxy rear server to the Proxomitron&#39;s list of external proxies</p>
+<p><code>127.0.0.1:8081 ProxHTTPSProxy</code></p>
+</li>
+<li><p>Add to Proxomitron&#39;s &quot;Bypass URLs that match this expression&quot; field if it is empty</p>
+<p><code>$OHDR(Tagged:ProxHTTPSProxyMII FrontProxy/*)$SETPROXY(127.0.0.1:8081)(^)</code></p>
+</li>
+<li><p>Add to the beginning of the entry in Proxomitron&#39;s &quot;Bypass URLs that match this expression&quot; field if it is <strong>not</strong> empty</p>
+<p><code>$OHDR(Tagged:ProxHTTPSProxyMII FrontProxy/*)$SETPROXY(127.0.0.1:8081)(^)|</code> </p>
+</li>
+</ul>
+<h2 id="tips">Tips</h2>
+<ul>
+<li><p>Proxomitron always executes some commands in &quot;Bypass URLs that match this expression&quot; field. Adding the entry there allows the Proxomitron to use the rear server when in Bypass mode.</p>
+<p>This undocumented feature brings many possibilities but remember, an actual match triggers bypass of filtering!</p>
+<ul>
+<li><code>$OHDR(Tagged:ProxHTTPSProxyMII FrontProxy/*)</code> checks for the header that indicates an https request.</li>
+<li><code>$SETPROXY(127.0.0.1:8081)</code> is executed when found.</li>
+<li><code>(^)</code> expression never matches. </li>
+</ul>
+</li>
+<li><p>Identify https connections by testing for the &quot;Tagged&quot; request header that the ProxHTTPSProxy front server adds to the request. </p>
+<p><code>$OHDR(Tagged:ProxHTTPSProxyMII FrontProxy/*)</code></p>
+</li>
+<li><p>For local file requests, use an expression like </p>
+<p><code>$USEPROXY(false)$RDIR(http://local.ptron/killed.gif)</code></p>
+</li>
+<li><p>Before redirecting &quot;Tagged&quot; connections to external resources consider removing the &quot;Tagged&quot; header. </p>
+</li>
+<li><p>If needed, the Proxomitron can still do https. After adding the ssl files to the Proxomitron, use a header filter like</p>
+<pre><code>[HTTP headers]
+In = FALSE
+Out = TRUE
+Key = &quot;Tagged: Use Proxomitron for https://badcert.com&quot;
+URL = &quot;badcert.com$OHDR(Tagged:ProxHTTPSProxyMII FrontProxy/*)$USEPROXY(false)$RDIR(https://badcert.com)&quot;
+</code></pre><p>This filter also removes the &quot;Tagged&quot; header. </p>
+</li>
+</ul>
+<h2 id="for-the-current-sidki-set">For the current sidki set</h2>
+<ol>
+<li><p>Add the following two lines to Exceptions-U</p>
+<pre><code>$OHDR(Tagged:ProxHTTPSProxyMII FrontProxy/*)$SET(keyword=$GET(keyword)i_proxy:3.)(^)
+~(^$TST(keyword=i_proxy:[03].))$OHDR(Tagged:ProxHTTPSProxyMII FrontProxy/*)$SET(keyword=$GET(keyword)i_proxy:3.)(^)
+</code></pre></li>
+<li><p>Redirect connections to http resources with an expression like</p>
+<p><code>$USEPROXY(false)$SET(keyword=i_proxy:0.)$RDIR(http://local.ptron/killed.gif)</code></p>
+</li>
+</ol>
+
+</body></html>

@@ -1,0 +1,22 @@
+ProxHTTPSProxyMII
+=================
+
+Version 1.2 (20141221)
+--------------
+
++ Content is streamed to client, while not cached before sending
+* Fix config auto reload
+* Less exception traceback dumped
+* Tagged header changed from "Tagged:Proxomitron FrontProxy/*" to "Tagged:ProxHTTPSProxyMII FrontProxy/*"
+
+Version 1.1 (20141024)
+--------------
+
++ Support URL bypass
++ Handle both HTTP and HTTPS
++ Auto reload config upon chagnes
+
+Version 1.0 (20140729)
+--------------
+
+Initial release
