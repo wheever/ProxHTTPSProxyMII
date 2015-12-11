@@ -38,7 +38,7 @@ def create_CA(capath):
          OpenSSL.crypto.X509Extension(b"extendedKeyUsage", True, b"serverAuth,clientAuth,emailProtection,timeStamping,msCodeInd,msCodeCom,msCTLSign,msSGC,msEFS,nsSGC"),
          OpenSSL.crypto.X509Extension(b"keyUsage", False, b"keyCertSign, cRLSign"),
          OpenSSL.crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject=ca)])
-    ca.sign(key, 'sha1')
+    ca.sign(key, 'sha256')
     with open(capath, 'wb') as fp:
         fp.write(OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, ca))
         fp.write(OpenSSL.crypto.dump_privatekey(OpenSSL.crypto.FILETYPE_PEM, key))
@@ -77,7 +77,7 @@ def dummy_cert(cafile, certfile, commonname):
         cert.get_subject().CN = '*' + commonname if commonname.startswith('.') else commonname
         cert.set_serial_number(int(time.time()*10000))
         cert.set_pubkey(ca.get_pubkey())
-        cert.sign(key, "sha1")
+        cert.sign(key, "sha256")
         with open(certfile, 'wb') as fp:
             fp.write(OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, cert))
             fp.write(OpenSSL.crypto.dump_privatekey(OpenSSL.crypto.FILETYPE_PEM, key))

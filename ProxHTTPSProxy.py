@@ -5,7 +5,7 @@
 
 _name = 'ProxHTTPSProxyMII'
 __author__ = 'phoenix'
-__version__ = 'v1.3a'
+__version__ = 'v1.3.1'
 
 CONFIG = "config.ini"
 CA_CERTS = "cacert.pem"
@@ -205,11 +205,23 @@ class FrontRequestHandler(ProxyRequestHandler):
         # Remove hop-by-hop headers
         self.purge_headers(self.headers)
         r = None
+
+        # Below code in connectionpool.py expect the headers to has a copy() and update() method
+        # That's why we can't use self.headers directly when call pool.urlopen()
+        #
+        # Merge the proxy headers. Only do this in HTTP. We have to copy the
+        # headers dict so we can safely change it without those changes being
+        # reflected in anyone else's copy.
+        # if self.scheme == 'http':
+        #     headers = headers.copy()
+        #     headers.update(self.proxy_headers)
+        headers = urllib3._collections.HTTPHeaderDict(self.headers)
+
         try:
             # Sometimes 302 redirect would fail with "BadStatusLine" exception, and IE11 doesn't restart the request.
             # retries=1 instead of retries=False fixes it.
             #! Retry may cause the requests with the same reqNum appear in the log window
-            r = pool.urlopen(self.command, url, body=self.postdata, headers=self.headers,
+            r = pool.urlopen(self.command, url, body=self.postdata, headers=headers,
                              retries=1, redirect=False, preload_content=False, decode_content=False)
             if not self.ssltunnel:
                 if self.command in ("GET", "HEAD"):
@@ -278,8 +290,20 @@ class RearRequestHandler(ProxyRequestHandler):
         self.postdata = self.rfile.read(int(data_length)) if data_length else None
         self.purge_headers(self.headers)
         r = None
+
+        # Below code in connectionpool.py expect the headers to has a copy() and update() method
+        # That's why we can't use self.headers directly when call pool.urlopen()
+        #
+        # Merge the proxy headers. Only do this in HTTP. We have to copy the
+        # headers dict so we can safely change it without those changes being
+        # reflected in anyone else's copy.
+        # if self.scheme == 'http':
+        #     headers = headers.copy()
+        #     headers.update(self.proxy_headers)
+        headers = urllib3._collections.HTTPHeaderDict(self.headers)
+
         try:
-            r = pool.urlopen(self.command, url, body=self.postdata, headers=self.headers,
+            r = pool.urlopen(self.command, url, body=self.postdata, headers=headers,
                              retries=1, redirect=False, preload_content=False, decode_content=False)
             if proxy:
                 logger.debug('Using Proxy - %s' % proxy)
@@ -353,7 +377,7 @@ try:
     for worker in (frontserver.serve_forever, rearserver.serve_forever,
                    pools.reloadConfig):
           thread = threading.Thread(target=worker)
-          thread.dameon = True
+          thread.daemon = True
           thread.start()
 
     print("=" * 76)
@@ -364,5 +388,7 @@ try:
     print('  ParentServer : %s' % config.DEFAULTPROXY)
     print('  Proxomitron  : ' + config.PROXADDR)
     print("=" * 76)
+    while True:
+        time.sleep(1)
 except KeyboardInterrupt:
     print("Quitting...")
