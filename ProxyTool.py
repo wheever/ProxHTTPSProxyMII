@@ -10,6 +10,7 @@ __version__ = '1.0'
 import time
 from datetime import datetime
 import logging
+import threading
 import cgi
 import socket
 import select
@@ -88,6 +89,18 @@ def read_write(socket1, socket2, max_idling=10):
                     pass
         if count == max_idling: break
 
+class Counter:
+    reset_value = 999
+    def __init__(self, start=0):
+        self.lock = threading.Lock()
+        self.value = start
+    def increment_and_set(self, obj, attr):
+        with self.lock:
+            self.value = self.value + 1 if self.value < self.reset_value else 1
+            setattr(obj, attr, self.value)
+
+counter = Counter()
+
 class ProxyRequestHandler(BaseHTTPRequestHandler):
     """RequestHandler with do_CONNECT method defined
     """
@@ -96,6 +109,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
     ssltunnel = False
     # Override default value 'HTTP/1.0'
     protocol_version = 'HTTP/1.1'
+    # To be set in each request
+    reqNum = 0
 
     def do_CONNECT(self):
         "Descrypt https request and dispatch to http handler"
@@ -128,13 +143,13 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             BaseHTTPRequestHandler.handle_one_request(self)
             return
         except (ConnectionError, FileNotFoundError) as e:
-            logger.warning(Fore.RED + "%s", e)
+            logger.warning("%03d " % self.reqNum + Fore.RED + "%s %s", self.server_version, e)
         except (ssl.SSLEOFError, ssl.SSLError) as e:
             if hasattr(self, 'url'):
                 # Happens after the tunnel is established
-                logger.warning(Fore.YELLOW + '"%s" while operating on established local SSL tunnel for [%s]' % (e, self.url))
+                logger.warning("%03d " % self.reqNum + Fore.YELLOW + '"%s" while operating on established local SSL tunnel for [%s]' % (e, self.url))
             else:
-                logger.warning(Fore.YELLOW + '"%s" while trying to establish local SSL tunnel for [%s]' % (e, self.path))
+                logger.warning("%03d " % self.reqNum + Fore.YELLOW + '"%s" while trying to establish local SSL tunnel for [%s]' % (e, self.path))
         self.close_connection = 1
 
     def sendout_error(self, url, code, message=None, explain=None):
@@ -190,12 +205,12 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     break
             server_conn.setblocking(True)
             if b'200' in datas and b'established' in datas.lower():
-                logger.info(Fore.CYAN + '[P] SSL Pass-Thru: https://%s/' % self.path)
+                logger.info("%03d " % self.reqNum + Fore.CYAN + '[P] SSL Pass-Thru: https://%s/' % self.path)
                 self.wfile.write(("HTTP/1.1 200 Connection established\r\n" +
                                   "Proxy-agent: %s\r\n\r\n" % self.version_string()).encode('ascii'))
                 read_write(self.connection, server_conn)
             else:
-                logger.warning(Fore.YELLOW + 'Proxy %s failed.', self.proxy)
+                logger.warning("%03d " % self.reqNum + Fore.YELLOW + 'Proxy %s failed.', self.proxy)
                 if datas:
                     logger.debug(datas)
                     self.wfile.write(datas)
@@ -209,7 +224,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
     def tunnel_traffic(self):
         "Tunnel traffic to remote host:port"
-        logger.info(Fore.CYAN + '[D] SSL Pass-Thru: https://%s/' % self.path)
+        logger.info("%03d " % self.reqNum + Fore.CYAN + '[D] SSL Pass-Thru: https://%s/' % self.path)
         server_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             server_conn.connect((self.host, int(self.port)))
@@ -219,10 +234,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             read_write(self.connection, server_conn)
         except TimeoutError:
             self.wfile.write(b"HTTP/1.1 504 Gateway Timeout\r\n\r\n")
-            logger.warning(Fore.YELLOW + 'Timed Out: https://%s:%s/' % (self.host, self.port))
+            logger.warning("%03d " % self.reqNum + Fore.YELLOW + 'Timed Out: https://%s:%s/' % (self.host, self.port))
         except socket.gaierror as e:
             self.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
-            logger.warning(Fore.YELLOW + '%s: https://%s:%s/' % (e, self.host, self.port))
+            logger.warning("%03d " % self.reqNum + Fore.YELLOW + '%s: https://%s:%s/' % (e, self.host, self.port))
         finally:
             # We don't maintain a connection reuse pool, so close the connection anyway
             server_conn.close()
@@ -249,7 +264,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                      "Proxy-Connection", "Proxy-Authenticate"]:
             del headers[name]
 
-    def write_headers(self, headers):
+    def purge_write_headers(self, headers):
         self.purge_headers(headers)
         for key, value in headers.items():
             self.send_header(key, value)

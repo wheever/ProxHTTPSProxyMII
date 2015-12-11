@@ -5,7 +5,7 @@
 
 _name = 'ProxHTTPSProxyMII'
 __author__ = 'phoenix'
-__version__ = 'v1.2'
+__version__ = 'v1.3a'
 
 CONFIG = "config.ini"
 CA_CERTS = "cacert.pem"
@@ -24,7 +24,7 @@ urllib3.disable_warnings()
 from socketserver import ThreadingMixIn
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
-from ProxyTool import ProxyRequestHandler, get_cert
+from ProxyTool import ProxyRequestHandler, get_cert, counter
 
 from colorama import init, Fore, Back, Style
 init(autoreset=True)
@@ -127,13 +127,14 @@ class FrontRequestHandler(ProxyRequestHandler):
 
     def do_CONNECT(self):
         "Descrypt https request and dispatch to http handler"
+
         # request line: CONNECT www.example.com:443 HTTP/1.1
         self.host, self.port = self.path.split(":")
         self.proxy, self.pool, self.noverify = pools.getpool(self.host)
         if any((fnmatch.fnmatch(self.host, pattern) for pattern in pools.blacklist)):
             # BLACK LIST
             self.deny_request()
-            logger.info(Fore.CYAN + 'Denied by blacklist: %s' % self.host)
+            logger.info("%03d " % self.reqNum + Fore.CYAN + 'Denied by blacklist: %s' % self.host)
         elif any((fnmatch.fnmatch(self.host, pattern) for pattern in pools.sslpasslist)):
             # SSL Pass-Thru
             if self.proxy and self.proxy.startswith('https'):
@@ -164,6 +165,9 @@ class FrontRequestHandler(ProxyRequestHandler):
 
     def do_METHOD(self):
         "Forward request to Proxomitron"
+
+        counter.increment_and_set(self, 'reqNum')
+
         if self.ssltunnel:
             # https request
             host = self.host if self.port == '443' else "%s:%s" % (self.host, self.port)
@@ -172,14 +176,14 @@ class FrontRequestHandler(ProxyRequestHandler):
             if not self.bypass:
                 url = "http://%s%s" % (host, self.path)
                 # Tag the request so Proxomitron can recognize it
-                self.headers["Tagged"] = self.version_string()
+                self.headers["Tagged"] = self.version_string() + ":%d" % self.reqNum
         else:
             # http request
             self.host = urlparse(self.path).hostname
             if any((fnmatch.fnmatch(self.host, pattern) for pattern in pools.blacklist)):
                 # BLACK LIST
                 self.deny_request()
-                logger.info(Fore.CYAN + 'Denied by blacklist: %s' % self.host)
+                logger.info("%03d " % self.reqNum + Fore.CYAN + 'Denied by blacklist: %s' % self.host)
                 return
             host = urlparse(self.path).netloc
             self.proxy, self.pool, self.noverify = pools.getpool(self.host, httpmode=True)
@@ -191,30 +195,36 @@ class FrontRequestHandler(ProxyRequestHandler):
             prefix += '[B]'
         pool = self.pool if self.bypass else proxpool
         data_length = self.headers.get("Content-Length")
-        self.postdata = self.rfile.read(int(data_length)) if data_length else None
+        self.postdata = self.rfile.read(int(data_length)) if data_length and int(data_length) > 0 else None
+        if self.command == "POST" and "Content-Length" not in self.headers:
+            buffer = self.rfile.read()
+            if buffer:
+                logger.warning("%03d " % self.reqNum + Fore.RED +
+                               'POST w/o "Content-Length" header (Bytes: %d | Transfer-Encoding: %s | HTTPS: %s',
+                               len(buffer), "Transfer-Encoding" in self.headers, self.ssltunnel)
         # Remove hop-by-hop headers
         self.purge_headers(self.headers)
-        # pool.urlopen() expects a dict like headers container for http request
-        headers = urllib3._collections.HTTPHeaderDict()
-        [headers.add(key, value) for (key, value) in self.headers.items()]
         r = None
         try:
             # Sometimes 302 redirect would fail with "BadStatusLine" exception, and IE11 doesn't restart the request.
             # retries=1 instead of retries=False fixes it.
-            r = pool.urlopen(self.command, url, body=self.postdata, headers=headers,
+            #! Retry may cause the requests with the same reqNum appear in the log window
+            r = pool.urlopen(self.command, url, body=self.postdata, headers=self.headers,
                              retries=1, redirect=False, preload_content=False, decode_content=False)
             if not self.ssltunnel:
-                logger.info(Fore.GREEN + '%s "%s %s %s" %s %s' %
-                            (prefix, self.command, url, self.request_version, r.status, r.getheader('Content-Length', '-')))
+                if self.command in ("GET", "HEAD"):
+                    logger.info("%03d " % self.reqNum + Fore.GREEN + '%s "%s %s" %s %s' %
+                                (prefix, self.command, url, r.status, r.getheader('Content-Length', '-')))
+                else:
+                    logger.info("%03d " % self.reqNum + Fore.GREEN + '%s "%s %s %s" %s %s' %
+                                (prefix, self.command, url, data_length, r.status, r.getheader('Content-Length', '-')))
 
             self.send_response_only(r.status, r.reason)
-            # HTTPResponse.getheader() combines multiple same name headers into one
-            # https://login.yahoo.com would fail to login
-            # Use HTTPResponse.msg instead
+            # HTTPResponse.msg is easier to handle than urllib3._collections.HTTPHeaderDict
             r.headers = r._original_response.msg
-            self.write_headers(r.headers)
+            self.purge_write_headers(r.headers)
 
-            if self.command == 'HEAD' or r.status in (100, 101, 204, 304):
+            if self.command == 'HEAD' or r.status in (100, 101, 204, 304) or r.getheader("Content-Length") == '0':
                 written = None
             else:
                 written = self.stream_to_client(r)
@@ -225,10 +235,10 @@ class FrontRequestHandler(ProxyRequestHandler):
         # Regular https request exceptions should be handled by rear server
         except urllib3.exceptions.TimeoutError as e:
             self.sendout_error(url, 504, message="Timeout", explain=e)
-            logger.warning(Fore.YELLOW + '[F] %s on "%s %s"', e, self.command, url)
+            logger.warning("%03d " % self.reqNum + Fore.YELLOW + '[F] %s on "%s %s"', e, self.command, url)
         except (urllib3.exceptions.HTTPError,) as e:
             self.sendout_error(url, 502, message="HTTPError", explain=e)
-            logger.warning(Fore.YELLOW + '[F] %s on "%s %s"', e, self.command, url)
+            logger.warning("%03d " % self.reqNum + Fore.YELLOW + '[F] %s on "%s %s"', e, self.command, url)
         finally:
             if r:
                 # Release the connection back into the pool
@@ -246,6 +256,19 @@ class RearRequestHandler(ProxyRequestHandler):
     
     def do_METHOD(self):
         "Convert http request to https"
+
+        if self.headers.get("Tagged") and self.headers["Tagged"].startswith(_name):
+            self.reqNum = int(self.headers["Tagged"].split(":")[1])
+            # Remove the tag
+            del self.headers["Tagged"]
+        else:
+            self.sendout_error(self.path, 400,
+                               explain="The proxy setting of the client is misconfigured.\n\n" +
+                               "Please set the HTTPS proxy port to %s " % config.FRONTPORT +
+                               "and check the Docs for other settings.")
+            logger.error(Fore.RED + Style.BRIGHT + "[Misconfigured HTTPS proxy port] " + self.path)
+            return
+
         # request line: GET http://somehost.com/path?attr=value HTTP/1.1
         url = "https" + self.path[4:]
         self.host = urlparse(self.path).hostname
@@ -254,29 +277,26 @@ class RearRequestHandler(ProxyRequestHandler):
         data_length = self.headers.get("Content-Length")
         self.postdata = self.rfile.read(int(data_length)) if data_length else None
         self.purge_headers(self.headers)
-        # Remove the tag
-        del self.headers["Tagged"]
-        # pool.urlopen() expects a dict like headers container for http request
-        headers = urllib3._collections.HTTPHeaderDict()
-        [headers.add(key, value) for (key, value) in self.headers.items()]
         r = None
         try:
-            r = pool.urlopen(self.command, url, body=self.postdata, headers=headers,
+            r = pool.urlopen(self.command, url, body=self.postdata, headers=self.headers,
                              retries=1, redirect=False, preload_content=False, decode_content=False)
             if proxy:
                 logger.debug('Using Proxy - %s' % proxy)
             color = Fore.RED if noverify else Fore.GREEN
-            logger.info(color + '%s "%s %s" %s %s' %
-                        (prefix, self.command, url, r.status, r.getheader('Content-Length', '-')))
+            if self.command in ("GET", "HEAD"):
+                logger.info("%03d " % self.reqNum + color + '%s "%s %s" %s %s' %
+                            (prefix, self.command, url, r.status, r.getheader('Content-Length', '-')))
+            else:
+                logger.info("%03d " % self.reqNum + color + '%s "%s %s %s" %s %s' %
+                            (prefix, self.command, url, data_length, r.status, r.getheader('Content-Length', '-')))
 
             self.send_response_only(r.status, r.reason)
-            # HTTPResponse.getheader() combines multiple same name headers into one
-            # https://login.yahoo.com would fail to login
-            # Use HTTPResponse.msg instead
+            # HTTPResponse.msg is easier to handle than urllib3._collections.HTTPHeaderDict
             r.headers = r._original_response.msg
-            self.write_headers(r.headers)
+            self.purge_write_headers(r.headers)
             
-            if self.command == 'HEAD' or r.status in (100, 101, 204, 304):
+            if self.command == 'HEAD' or r.status in (100, 101, 204, 304) or r.getheader("Content-Length") == '0':
                 written = None
             else:
                 written = self.stream_to_client(r)
@@ -285,13 +305,14 @@ class RearRequestHandler(ProxyRequestHandler):
 
         except urllib3.exceptions.SSLError as e:
             self.sendout_error(url, 417, message="SSL Certificate Failed", explain=e)
-            logger.error(Fore.RED + Style.BRIGHT + "[SSL Certificate Error] " + url)
+            logger.error("%03d " % self.reqNum + Fore.RED + Style.BRIGHT + "[SSL Certificate Error] " + url)
         except urllib3.exceptions.TimeoutError as e:
             self.sendout_error(url, 504, message="Timeout", explain=e)
-            logger.warning(Fore.YELLOW + '[R] %s on "%s %s"', e, self.command, url)
+            logger.warning("%03d " % self.reqNum + Fore.YELLOW + '[R]%s "%s %s" %s', prefix, self.command, url, e)
         except (urllib3.exceptions.HTTPError,) as e:
             self.sendout_error(url, 502, message="HTTPError", explain=e)
-            logger.warning(Fore.YELLOW + '[R] %s on "%s %s"', e, self.command, url)
+            logger.warning("%03d " % self.reqNum + Fore.YELLOW + '[R]%s "%s %s" %s', prefix, self.command, url, e)
+
         finally:
             if r:
                 # Release the connection back into the pool
@@ -317,7 +338,7 @@ try:
     logger = logging.getLogger(__name__)
     logger.setLevel(getattr(logging, config.LOGLEVEL, logging.INFO))
     handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s %(message)s', datefmt='[%H:%M:%S]')
+    formatter = logging.Formatter('%(asctime)s %(message)s', datefmt='[%H:%M]')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
