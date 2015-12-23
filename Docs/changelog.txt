@@ -1,6 +1,17 @@
 ProxHTTPSProxyMII
 =================
 
+Version 1.3.1 (20151001)
+--------------
+
+* Certifications are now signed via SHA256 instead of SHA1
+
+Version 1.3 (20150114)
+--------------
+
++ Each request has a number ranged from 001 to 999 for reference. 000 is reserved for SSL requests not MITMed like those in [BLACKLIST] and [SSL Pass-Thru] sections.
++ Log window now displays the length of the bytes submitted in POST method
+
 Version 1.2 (20141221)
 --------------
 
