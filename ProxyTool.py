@@ -14,7 +14,6 @@ import threading
 import cgi
 import socket
 import select
-import selectors
 import ssl
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -40,33 +39,6 @@ message_format = """\
     </body>
 </html>
 """
-
-def read_write(socket1, socket2):
-    "Read and Write contents between 2 sockets, wait 5s for no data before return"
-    start = time.time()
-    with selectors.DefaultSelector() as selector:
-        socket1.setblocking(False)
-        socket2.setblocking(False)
-        selector.register(socket1, selectors.EVENT_READ)
-        selector.register(socket2, selectors.EVENT_READ)
-        while True:
-            tasks = selector.select(5)
-            if not tasks: break
-            for key, events in tasks:
-                if events & selectors.EVENT_READ:
-                    reader = key.fileobj
-                    writer = socket2 if reader is socket1 else socket1
-                    try:
-                        data = reader.recv(1024)
-                        if data:
-                            writer.sendall(data)
-                        else:
-                            # EOF
-                            selector.unregister(reader)
-                            selector.unregister(writer)
-                    except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-                        pass
-        logger.debug("took %.2Fs" % (time.time()-start))
 
 def read_write(socket1, socket2, max_idling=10):
     "Read and Write contents between 2 sockets"

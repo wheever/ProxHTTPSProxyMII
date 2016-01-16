@@ -5,7 +5,7 @@
 
 _name = 'ProxHTTPSProxyMII'
 __author__ = 'phoenix'
-__version__ = 'v1.3.1'
+__version__ = 'v1.4'
 
 CONFIG = "config.ini"
 CA_CERTS = "cacert.pem"
@@ -18,6 +18,7 @@ import logging
 import threading
 import ssl
 import urllib3
+from urllib3.contrib.socks import SOCKSProxyManager
 #https://urllib3.readthedocs.org/en/latest/security.html#insecurerequestwarning
 urllib3.disable_warnings()
 
@@ -77,16 +78,12 @@ class ConnectionPools:
         for section in proxy_sections:
             proxy = section.split()[1]
             self.pools.append(dict(proxy=proxy,
-                                   # maxsize is the max. number of connections to the same server
-                                   pool=[urllib3.ProxyManager(proxy, 10, maxsize=8, timeout=self.timeout, **self.sslparams),
-                                         urllib3.ProxyManager(proxy, 10, maxsize=8, timeout=self.timeout)],
+                                   pool=self.setProxyPool(proxy),
                                    patterns=list(self.conf[section].keys())))
         default_proxy = self.conf['GENERAL'].get('DefaultProxy')
-        default_pool = ([urllib3.ProxyManager(default_proxy, 10, maxsize=8, timeout=self.timeout, **self.sslparams),
-                         urllib3.ProxyManager(default_proxy, 10, maxsize=8, timeout=self.timeout)]
-                        if default_proxy else
-                        [urllib3.PoolManager(10, maxsize=8, timeout=self.timeout, **self.sslparams),
-                         urllib3.PoolManager(10, maxsize=8, timeout=self.timeout)])
+        default_pool = (self.setProxyPool(default_proxy) if default_proxy else
+                        [urllib3.PoolManager(num_pools=10, maxsize=8, timeout=self.timeout, **self.sslparams),
+                         urllib3.PoolManager(num_pools=10, maxsize=8, timeout=self.timeout)])
         self.pools.append({'proxy': default_proxy, 'pool': default_pool, 'patterns': '*'})
 
         self.noverifylist = list(self.conf['SSL No-Verify'].keys())
@@ -109,6 +106,21 @@ class ConnectionPools:
         for pool in self.pools:
             if any((fnmatch.fnmatch(host, pattern) for pattern in pool['patterns'])):
                 return pool['proxy'], pool['pool'][noverify], noverify
+
+    def setProxyPool(self, proxy):
+        scheme = proxy.split(':')[0]
+        if scheme in ('http', 'https'):
+            ProxyManager = urllib3.ProxyManager
+        elif scheme in ('socks4', 'socks5'):
+            ProxyManager = SOCKSProxyManager
+        else:
+            print("Wrong Proxy Format: " + proxy)
+            print("Proxy should start with http/https/socks4/socks5 .")
+            input()
+            raise SystemExit
+        # maxsize is the max. number of connections to the same server
+        return [ProxyManager(proxy, num_pools=10, maxsize=8, timeout=self.timeout, **self.sslparams),
+                ProxyManager(proxy, num_pools=10, maxsize=8, timeout=self.timeout)]
 
 class FrontServer(ThreadingMixIn, HTTPServer):
     """Handle requests in a separate thread."""
@@ -190,9 +202,6 @@ class FrontRequestHandler(ProxyRequestHandler):
             self.bypass = any((fnmatch.fnmatch('http://' + host + urlparse(self.path).path, pattern) for pattern in pools.bypasslist))
             url = self.path
         self.url = url
-        prefix = '[P]' if self.proxy else '[D]'
-        if self.bypass:
-            prefix += '[B]'
         pool = self.pool if self.bypass else proxpool
         data_length = self.headers.get("Content-Length")
         self.postdata = self.rfile.read(int(data_length)) if data_length and int(data_length) > 0 else None
@@ -224,11 +233,15 @@ class FrontRequestHandler(ProxyRequestHandler):
             r = pool.urlopen(self.command, url, body=self.postdata, headers=headers,
                              retries=1, redirect=False, preload_content=False, decode_content=False)
             if not self.ssltunnel:
+                if self.bypass:
+                    prefix = '[BP]' if self.proxy else '[BD]'
+                else:
+                    prefix = '[D]'
                 if self.command in ("GET", "HEAD"):
-                    logger.info("%03d " % self.reqNum + Fore.GREEN + '%s "%s %s" %s %s' %
+                    logger.info("%03d " % self.reqNum + Fore.MAGENTA + '%s "%s %s" %s %s' %
                                 (prefix, self.command, url, r.status, r.getheader('Content-Length', '-')))
                 else:
-                    logger.info("%03d " % self.reqNum + Fore.GREEN + '%s "%s %s %s" %s %s' %
+                    logger.info("%03d " % self.reqNum + Fore.MAGENTA + '%s "%s %s %s" %s %s' %
                                 (prefix, self.command, url, data_length, r.status, r.getheader('Content-Length', '-')))
 
             self.send_response_only(r.status, r.reason)
@@ -367,7 +380,7 @@ try:
     logger.addHandler(handler)
 
     pools = ConnectionPools(CONFIG)
-    proxpool = urllib3.ProxyManager(config.PROXADDR, 10, maxsize=8,
+    proxpool = urllib3.ProxyManager(config.PROXADDR, num_pools=10, maxsize=8,
                                     # A little longer than timeout of rear pool
                                     # to avoid trigger front server exception handler
                                     timeout=urllib3.util.timeout.Timeout(connect=90.0, read=310.0))
