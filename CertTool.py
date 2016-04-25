@@ -20,6 +20,7 @@ def create_CA(capath):
     key.generate_key(OpenSSL.crypto.TYPE_RSA, 2048)
     ca = OpenSSL.crypto.X509()
     ca.set_serial_number(0)
+    # Value 2 means v3
     ca.set_version(2)
     subj = ca.get_subject()
     subj.countryName = 'CN'
@@ -71,6 +72,8 @@ def dummy_cert(cafile, certfile, commonname):
             ca = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, content)
             key = OpenSSL.crypto.load_privatekey(OpenSSL.crypto.FILETYPE_PEM, content)
         cert = OpenSSL.crypto.X509()
+        # Value 2 means v3
+        cert.set_version(2)
         cert.gmtime_adj_notBefore(0)
         cert.gmtime_adj_notAfter(60 * 60 * 24 * 3652)
         cert.set_issuer(ca.get_subject())
