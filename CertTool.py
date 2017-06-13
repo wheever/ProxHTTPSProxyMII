@@ -77,9 +77,15 @@ def dummy_cert(cafile, certfile, commonname):
         cert.gmtime_adj_notBefore(0)
         cert.gmtime_adj_notAfter(60 * 60 * 24 * 3652)
         cert.set_issuer(ca.get_subject())
-        cert.get_subject().CN = '*' + commonname if commonname.startswith('.') else commonname
+        if commonname.startswith('.'):
+          domain = '*' + commonname
+        else:
+          domain = commonname
+        cert.get_subject().CN = domain
         cert.set_serial_number(int(time.time()*10000))
         cert.set_pubkey(ca.get_pubkey())
+        cert.add_extensions(
+           [OpenSSL.crypto.X509Extension(b"subjectAltName", False, str.encode("DNS:"+domain))])
         cert.sign(key, "sha256")
         with open(certfile, 'wb') as fp:
             fp.write(OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, cert))
